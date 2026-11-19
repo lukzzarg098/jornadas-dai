@@ -7,7 +7,7 @@ class AgendaRepository(private val api: ProgramaApi, private val dao: CarteleraD
         val fichas = api.consultar().map {
             Charla(it.id, it.title, it.track, it.day, it.time, it.room, it.speaker, it.summary)
         }
-        dao.guardar(fichas)
+        dao.aplicarPrograma(fichas)
     }
 
     suspend fun cambiarFavorita(id: String) = dao.alternar(id)
