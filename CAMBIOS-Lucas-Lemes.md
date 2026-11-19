@@ -55,6 +55,20 @@ Cada charla tiene datos que son **del servidor** (título, sala, hora, ponente�
   - [x] En v1 se marca «Compose en producción». Al pasar a v2, la misma charla muestra «Compose en producción avanzada» y «Sala Puerto» y conserva «En mi agenda».
   - [x] Con «Navegación entre pantallas» marcada, al pasar a v3: «Compose…» desaparece del Programa y de Mi agenda, aparece «Clínica de trazas» y «Navegación…» sigue marcada.
   - [x] Volviendo a v1, «Compose en producción» reaparece sin marca.
+
+### Cambio: Mi agenda se resuelve en la base, no en la pantalla
+
+- **Problema:** en `Portada.kt`, la pestaña Mi agenda calculaba `charlas.filter { it.favorita }` dentro del composable. La regla de qué charlas forman la agenda del usuario vivía en la vista.
+- **Riesgo:** MVVM y fuente de verdad: la vista debe solo dibujar el estado que publica el ViewModel. Con la regla en el composable, el filtro se recalcula en cada recomposición, no se puede probar sin abrir la pantalla y cualquier otra vista que muestre la agenda tendría que repetir la misma regla. Además se traía toda la tabla para filtrarla en Kotlin, cuando el filtro corresponde a SQL.
+- **Cambio:**
+  - `CarteleraDao.observarAgenda()`: `SELECT * FROM charlas WHERE favorita = 1 ORDER BY dia, hora, sala`, observado con `Flow`.
+  - `AgendaRepository.agenda` lo expone.
+  - `ProgramaModel.agenda` lo publica como `StateFlow`.
+  - `Portada` solo lo recolecta con `collectAsStateWithLifecycle()` y lo dibuja.
+
+  Como es un `Flow` de Room, la agenda se actualiza sola cuando el merge retira una charla o el usuario cambia una marca, sin que nadie tenga que pedir "recargar".
+- **Mapper DTO → modelo:** la conversión de `FichaRemota` (forma del JSON) a `Charla` quedó en una función `toCharla()` dentro del repositorio, para que el DTO no salga de la capa de datos.
+- **Verificación:** con «Compose en producción» y «Navegación entre pantallas» marcadas, Mi agenda muestra ambas en v1; en v2 muestra «Compose en producción avanzada · Sala Puerto» con su marca; en v3 muestra solo «Navegación entre pantallas».
   - [x] Con demora larga (8 s), marcar y desmarcar charlas durante la petición: al llegar la respuesta, las marcas quedan como las dejó el usuario.
 
 ---

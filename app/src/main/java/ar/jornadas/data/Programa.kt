@@ -21,6 +21,10 @@ abstract class CarteleraDao {
     @Query("SELECT * FROM charlas ORDER BY dia, hora, sala")
     abstract fun observar(): Flow<List<Charla>>
 
+    // Mi agenda: el filtro lo resuelve SQL, no la pantalla.
+    @Query("SELECT * FROM charlas WHERE favorita = 1 ORDER BY dia, hora, sala")
+    abstract fun observarAgenda(): Flow<List<Charla>>
+
     @Query("UPDATE charlas SET favorita = NOT favorita WHERE id = :id")
     abstract suspend fun alternar(id: String)
 
