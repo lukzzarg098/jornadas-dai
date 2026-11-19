@@ -8,29 +8,32 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ar.jornadas.data.Charla
 
+private val DIAS = listOf("Ambos días", "Día 1", "Día 2")   // el índice es el valor del filtro
+private val TEMAS = listOf<String?>(null, "Android", "Datos", "Calidad")
+
+// Recibe estado y callbacks: solo dibuja y avisa. No conoce al ViewModel.
 @Composable
-fun Catalogo(model: ProgramaModel, abrir: (String) -> Unit) {
-    LaunchedEffect(Unit) { model.recargar() }
-    val dia by model.dia.collectAsStateWithLifecycle()
-    var tema by remember { mutableStateOf("Todos") }
-    val estado by model.catalogo.collectAsStateWithLifecycle()
-    Selector(listOf("Ambos días", "Día 1", "Día 2"), dia) { model.dia.value = it }
-    val temas = listOf("Todos", "Android", "Datos", "Calidad")
-    Selector(temas, temas.indexOf(tema)) { tema = temas[it] }
-    TextButton(onClick = model::recargar) { Text("Actualizar") }
+fun Catalogo(
+    estado: CatalogoUiState,
+    elegirDia: (Int) -> Unit,
+    elegirTema: (String?) -> Unit,
+    actualizar: () -> Unit,
+    abrir: (String) -> Unit,
+) {
+    LaunchedEffect(Unit) { actualizar() }
+    Selector(DIAS, estado.dia, elegirDia)
+    Selector(TEMAS.map { it ?: "Todos" }, TEMAS.indexOf(estado.tema)) { elegirTema(TEMAS[it]) }
+    TextButton(onClick = actualizar) { Text("Actualizar") }
     if (estado.descargando) LinearProgressIndicator(Modifier.fillMaxWidth())
     estado.aviso?.let { Text(it) }   // el aviso se suma arriba; ya no reemplaza a la lista
     when (val contenido = estado.contenido) {
         Contenido.Cargando -> Unit
-        Contenido.SinDescarga -> OutlinedButton(onClick = model::recargar) { Text("Reintentar") }
+        Contenido.SinDescarga -> OutlinedButton(onClick = actualizar) { Text("Reintentar") }
         Contenido.SinCharlas -> Text("Sin charlas programadas.")
-        is Contenido.ConCharlas -> Grilla(
-            contenido.charlas.filter { (dia == 0 || it.dia == dia) && (tema == "Todos" || it.tema == tema) },
-            abrir
-        )
+        Contenido.SinCoincidencias -> Text("Ninguna charla coincide con los filtros.")
+        is Contenido.ConCharlas -> Grilla(contenido.charlas, abrir)
     }
 }
 

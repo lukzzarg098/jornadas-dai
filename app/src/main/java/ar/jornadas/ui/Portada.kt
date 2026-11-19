@@ -14,12 +14,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 fun Portada(model: ProgramaModel) {
-    var seccion by rememberSaveable { mutableStateOf("Programa") }
-    var detalle by rememberSaveable { mutableStateOf<String?>(null) }
-    val charlas by model.charlas.collectAsStateWithLifecycle()
+    var seccion by rememberSaveable { mutableStateOf("Programa") }   // navegación visual entre pestañas
+    val detalle by model.detalle.collectAsStateWithLifecycle()
+    val catalogo by model.catalogo.collectAsStateWithLifecycle()
     val agenda by model.agenda.collectAsStateWithLifecycle()
     BackHandler(detalle != null || seccion != "Programa") {
-        if (detalle != null) detalle = null else seccion = "Programa"
+        if (detalle != null) model.cerrarDetalle() else seccion = "Programa"
     }
     MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF185B54), secondary = Color(0xFF995136))) {
         Scaffold(bottomBar = {
@@ -34,9 +34,10 @@ fun Portada(model: ProgramaModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Spacer(Modifier.height(8.dp))
                 Text("Jornadas del Sur", style = MaterialTheme.typography.labelLarge)
-                if (detalle != null) {
-                    TextButton(onClick = { detalle = null }) { Text("Volver") }
-                    val ficha = charlas.find { it.id == detalle }
+                val abierto = detalle
+                if (abierto != null) {
+                    TextButton(onClick = model::cerrarDetalle) { Text("Volver") }
+                    val ficha = abierto.charla
                     if (ficha != null) Column(Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(ficha.titulo, style = MaterialTheme.typography.headlineMedium)
@@ -50,10 +51,16 @@ fun Portada(model: ProgramaModel) {
                 } else {
                     Text(seccion, style = MaterialTheme.typography.headlineLarge)
                     when (seccion) {
-                        "Programa" -> Catalogo(model) { detalle = it }
+                        "Programa" -> Catalogo(
+                            estado = catalogo,
+                            elegirDia = model::elegirDia,
+                            elegirTema = model::elegirTema,
+                            actualizar = model::recargar,
+                            abrir = model::abrir,
+                        )
                         "Mi agenda" -> {
                             if (agenda.isEmpty()) Text("Todavía no agregaste charlas.")
-                            Grilla(agenda) { detalle = it }
+                            Grilla(agenda, model::abrir)
                         }
                         else -> Mesa(model.mesa)
                     }

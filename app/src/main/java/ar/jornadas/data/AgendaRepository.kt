@@ -14,7 +14,9 @@ sealed interface ResultadoDescarga {
 }
 
 class AgendaRepository(private val api: ProgramaApi, private val dao: CarteleraDao) {
-    val programa = dao.observar()
+    fun programa(dia: Int, tema: String?) = dao.observarFiltrado(dia, tema)
+    fun charla(id: String) = dao.observarCharla(id)
+    val hayCharlas = dao.hayCharlas()
     val agenda = dao.observarAgenda()
     val hayEdicion = dao.hayEdicion()
 

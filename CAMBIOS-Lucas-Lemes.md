@@ -11,7 +11,7 @@ Cada pedido del enunciado se trabajó en su propia branch. Para cada cambio se i
 | 0 · Compilación | `main` | Hecho |
 | 42 · Agenda personal | `pedido-42-agenda-personal` | Hecho |
 | 41 · Programa sin señal | `pedido-41-sin-senal` | Hecho (sale de la 42) |
-| 43 · Volver al punto de lectura | `pedido-43-punto-de-lectura` | Pendiente |
+| 43 · Volver al punto de lectura | `pedido-43-punto-de-lectura` | Hecho (sale de la 41) |
 | 44 · Control de descargas | `pedido-44-control-descargas` | Pendiente |
 
 ---
@@ -123,7 +123,42 @@ Si alguna vez se descargó el programa, la app trabaja con lo que guardó, haya 
 
 ## 43 · Volver al punto de lectura
 
-_Pendiente._
+### Qué pide
+Los filtros (día y tema) y la ficha abierta tienen que sobrevivir a abrir una ficha y volver, a rotar la pantalla y a que Android mate el proceso con la app en segundo plano. Una tarea nueva arranca sin filtros.
+
+### Cambio 1: filtros y ficha abierta en el `SavedStateHandle` del ViewModel
+
+- **Problema:** cada dato vivía en un lugar distinto, y ninguno cubría todos los casos:
+  - el tema era un `remember` dentro de `Catalogo`, así que se perdía apenas se abría una ficha (el composable sale de la composición);
+  - el día era un `MutableStateFlow` público del ViewModel: sobrevivía a la rotación pero no a la muerte del proceso, y cualquier pantalla lo podía modificar;
+  - la ficha abierta era un `rememberSaveable` de `Portada`, y la charla se buscaba en el composable con `charlas.find`.
+- **Riesgo:** ciclo de vida (1.3 de la guía). El ViewModel sobrevive a la rotación pero **no** a la muerte del proceso, y `remember` no sobrevive ni a que el composable salga de pantalla. Lo que el usuario estaba viendo es justo lo que va al `SavedStateHandle`.
+- **Cambio** (`ui/ProgramaModel.kt`, `ui/Portada.kt`):
+  - `ProgramaModel` recibe un `SavedStateHandle`. El día, el tema y el id de la ficha abierta se leen con `getStateFlow(...)` y se escriben solo desde funciones del ViewModel: `elegirDia`, `elegirTema`, `abrir` y `cerrarDetalle`. Los flujos son privados: el estado tiene un solo dueño.
+  - El `SavedStateHandle` lo restaura Android cuando recupera la tarea tras matar el proceso, y no existe en una tarea nueva: por eso una tarea nueva arranca sin filtros sin código extra.
+  - `CatalogoUiState` suma `dia` y `tema`: son propiedades que conviven con cualquier contenido (2.3 de la guía).
+  - `detalle: StateFlow<DetalleUiState?>` publica la ficha abierta. `Portada` ya no busca la charla: la recibe armada.
+  - La pestaña activa sigue en `rememberSaveable`: es navegación visual y también sobrevive a la muerte del proceso.
+
+### Cambio 2: los filtros se resuelven en SQL
+
+- **Problema:** `Catalogo` recibía todas las charlas y las filtraba en Kotlin dentro del composable.
+- **Riesgo:** la regla de qué charlas se muestran estaba en la vista y se recalculaba en cada recomposición. Además se traía toda la tabla para filtrarla en memoria, cuando filtrar y ordenar corresponde a la consulta (3.6 y 3.9 de la guía).
+- **Cambio** (`data/Programa.kt`, `data/AgendaRepository.kt`, `ui/ProgramaModel.kt`):
+  - `CarteleraDao.observarFiltrado(dia, tema)`: `WHERE (:dia = 0 OR dia = :dia) AND (:tema IS NULL OR tema = :tema)`, con parámetros enlazados.
+  - El ViewModel usa `flatMapLatest` sobre los filtros: cuando el usuario cambia uno, deja la consulta anterior y observa la nueva.
+  - `hayCharlas()` (`EXISTS`) separa "la edición vino vacía" de "hay charlas pero ninguna cumple los filtros". Por eso `Contenido` suma la variante `SinCoincidencias` (2.7 de la guía: filtro sin coincidencias y lista vacía son casos distintos).
+  - `observarCharla(id)` alimenta la ficha abierta. Si la charla se retira del programa mientras está abierta, llega `null` y la ficha queda vacía con el botón Volver.
+
+### Cambio 3: `Catalogo` recibe estado y callbacks
+
+- **Problema:** `Catalogo(model, abrir)` recibía el ViewModel entero y leía de él varios flujos por separado.
+- **Riesgo:** la vista dependía de toda la clase del ViewModel y no se podía previsualizar ni probar con un estado inventado (2.6 de la guía).
+- **Cambio:** `Catalogo(estado, elegirDia, elegirTema, actualizar, abrir)` solo dibuja `CatalogoUiState` y avisa cada acción. `Portada` conecta el estado y las funciones del ViewModel.
+- **Verificación:** compila (`./gradlew assembleDebug`). Pruebas manuales pendientes:
+  - [ ] Elegir Día 2 y Datos, abrir «Cachés para viajeros», volver y rotar: quedan dos resultados de Datos («Cachés para viajeros» y «Consultas observables»).
+  - [ ] Repetir dejando la ficha abierta y mandando la app al fondo. `adb shell am kill ar.jornadas` y volver desde Recientes: aparece la ficha; al volver, siguen los dos filtros.
+  - [ ] Abrir la app como tarea nueva (desde el ícono, tras cerrarla desde Recientes): arranca sin filtros.
 
 ---
 
