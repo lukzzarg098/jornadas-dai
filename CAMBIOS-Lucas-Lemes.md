@@ -53,8 +53,8 @@ Cada charla tiene datos que son **del servidor** (título, sala, hora, ponente�
 - **Compatibilidad:** el esquema de la tabla no cambió (mismas columnas), por lo que no hace falta migración y los usuarios que actualizan conservan sus charlas guardadas.
 - **Verificación** (desde la pestaña Mesa, eligiendo la edición y tocando *Actualizar*):
   - [x] En v1 se marca «Compose en producción». Al pasar a v2, la misma charla muestra «Compose en producción avanzada» y «Sala Puerto» y conserva «En mi agenda».
-  - [ ] Con «Navegación entre pantallas» marcada, al pasar a v3: «Compose…» desaparece del Programa y de Mi agenda, aparece «Clínica de trazas» y «Navegación…» sigue marcada.
-  - [ ] Volviendo a v1, «Compose en producción» reaparece sin marca.
+  - [x] Con «Navegación entre pantallas» marcada, al pasar a v3: «Compose…» desaparece del Programa y de Mi agenda, aparece «Clínica de trazas» y «Navegación…» sigue marcada.
+  - [x] Volviendo a v1, «Compose en producción» reaparece sin marca.
   - [x] Con demora larga (8 s), marcar y desmarcar charlas durante la petición: al llegar la respuesta, las marcas quedan como las dejó el usuario.
 
 ---
