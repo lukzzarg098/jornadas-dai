@@ -1,10 +1,13 @@
 package ar.jornadas.ui
 
-import android.app.Application
 import androidx.lifecycle.*
-import ar.jornadas.Servicios
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import ar.jornadas.JornadasApp
+import ar.jornadas.data.AgendaRepository
 import ar.jornadas.data.Charla
 import ar.jornadas.data.ResultadoDescarga
+import ar.jornadas.lab.ServicioLocal
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -31,7 +34,12 @@ data class CatalogoUiState(
 data class DetalleUiState(val id: String, val charla: Charla?)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class ProgramaModel(app: Application, private val guardado: SavedStateHandle) : AndroidViewModel(app) {
+// Recibe sus dependencias por constructor: no crea la base ni Retrofit (eso lo hace JornadasApp una vez).
+class ProgramaModel(
+    private val repo: AgendaRepository,
+    val mesa: ServicioLocal,
+    private val guardado: SavedStateHandle,
+) : ViewModel() {
     /** Estado de la última petición. Privado: la pantalla solo ve CatalogoUiState. */
     private sealed interface Descarga {
         data object Ninguna : Descarga
@@ -41,9 +49,6 @@ class ProgramaModel(app: Application, private val guardado: SavedStateHandle) : 
 
     private data class Filtros(val dia: Int, val tema: String?)
 
-    private val servicios = Servicios(app)
-    val mesa = servicios.mesa
-    private val repo = servicios.agenda
     private val descarga = MutableStateFlow<Descarga>(Descarga.Ninguna)
 
     // Punto de lectura: filtros y ficha abierta viven en el SavedStateHandle, así sobreviven
@@ -68,12 +73,19 @@ class ProgramaModel(app: Application, private val guardado: SavedStateHandle) : 
             if (id == null) flowOf(null) else repo.charla(id).map { DetalleUiState(id, it) }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, detalleId.value?.let { DetalleUiState(it, null) })
 
+    init {
+        // Una carga automática por proceso. Rotar, abrir una ficha o cambiar de pestaña no recargan:
+        // el ViewModel sobrevive a la rotación y, aunque se creara otro, el repositorio ya la entregó.
+        if (repo.tomarCargaAutomatica()) recargar()
+    }
+
     fun elegirDia(valor: Int) { guardado[CLAVE_DIA] = valor }
     fun elegirTema(valor: String?) { guardado[CLAVE_TEMA] = valor }
     fun abrir(id: String) { guardado[CLAVE_DETALLE] = id }
     fun cerrarDetalle() { guardado[CLAVE_DETALLE] = null }
 
     fun recargar() {
+        if (descarga.value == Descarga.EnCurso) return   // dos toques durante una petición = un solo intento
         descarga.value = Descarga.EnCurso
         viewModelScope.launch {
             descarga.value = when (repo.sincronizar()) {
@@ -110,9 +122,17 @@ class ProgramaModel(app: Application, private val guardado: SavedStateHandle) : 
         else "$causa Todavía no hay un programa guardado."
     }
 
-    private companion object {
-        const val CLAVE_DIA = "dia"
-        const val CLAVE_TEMA = "tema"
-        const val CLAVE_DETALLE = "detalle"
+    companion object {
+        private const val CLAVE_DIA = "dia"
+        private const val CLAVE_TEMA = "tema"
+        private const val CLAVE_DETALLE = "detalle"
+
+        // Fábrica explícita: toma las dependencias únicas del proceso y el SavedStateHandle de la pantalla.
+        val Factory = viewModelFactory {
+            initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as JornadasApp
+                ProgramaModel(app.servicios.agenda, app.servicios.mesa, createSavedStateHandle())
+            }
+        }
     }
 }

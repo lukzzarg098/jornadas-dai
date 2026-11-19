@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Cómo terminó una descarga. Es un resultado, no un texto: el mensaje lo arma el ViewModel. */
 sealed interface ResultadoDescarga {
@@ -14,6 +15,12 @@ sealed interface ResultadoDescarga {
 }
 
 class AgendaRepository(private val api: ProgramaApi, private val dao: CarteleraDao) {
+    // El repositorio es único por proceso (JornadasApp), así que este flag también.
+    private val cargaAutomaticaPedida = AtomicBoolean(false)
+
+    /** Devuelve true solo la primera vez que se pide en este proceso. */
+    fun tomarCargaAutomatica(): Boolean = cargaAutomaticaPedida.compareAndSet(false, true)
+
     fun programa(dia: Int, tema: String?) = dao.observarFiltrado(dia, tema)
     fun charla(id: String) = dao.observarCharla(id)
     val hayCharlas = dao.hayCharlas()

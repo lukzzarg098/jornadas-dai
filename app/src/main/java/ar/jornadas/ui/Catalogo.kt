@@ -22,7 +22,6 @@ fun Catalogo(
     actualizar: () -> Unit,
     abrir: (String) -> Unit,
 ) {
-    LaunchedEffect(Unit) { actualizar() }
     Selector(DIAS, estado.dia, elegirDia)
     Selector(TEMAS.map { it ?: "Todos" }, TEMAS.indexOf(estado.tema)) { elegirTema(TEMAS[it]) }
     TextButton(onClick = actualizar) { Text("Actualizar") }

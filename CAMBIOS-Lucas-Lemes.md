@@ -4,7 +4,7 @@
 
 **Autor:** Lucas Lemes
 
-Cada pedido del enunciado se trabajó en su propia branch. Para cada cambio se indica el problema encontrado, el riesgo que implicaba, qué se modificó y cómo se verificó.
+Cada pedido del enunciado se trabajó en su propia branch. Las branches están encadenadas en el orden de la tabla (cada una sale de la anterior), así que **`pedido-44-control-descargas` contiene la versión final con los cuatro pedidos**. Para cada cambio se indica el problema encontrado, el riesgo que implicaba, qué se modificó y cómo se verificó.
 
 | Punto | Branch | Estado |
 |---|---|---|
@@ -12,7 +12,7 @@ Cada pedido del enunciado se trabajó en su propia branch. Para cada cambio se i
 | 42 · Agenda personal | `pedido-42-agenda-personal` | Hecho |
 | 41 · Programa sin señal | `pedido-41-sin-senal` | Hecho (sale de la 42) |
 | 43 · Volver al punto de lectura | `pedido-43-punto-de-lectura` | Hecho (sale de la 41) |
-| 44 · Control de descargas | `pedido-44-control-descargas` | Pendiente |
+| 44 · Control de descargas | `pedido-44-control-descargas` | Hecho (sale de la 43) |
 
 ---
 
@@ -164,4 +164,39 @@ Los filtros (día y tema) y la ficha abierta tienen que sobrevivir a abrir una f
 
 ## 44 · Control de descargas
 
-_Pendiente._
+### Qué pide
+Una carga automática por proceso y una por cada actualización explícita. Rotar, entrar a una ficha o cambiar de pestaña no agregan peticiones. Dos toques durante una petición cuentan como un solo intento. Después de un éxito o una falla se puede volver a pedir, y los filtros siguen editables durante la espera.
+
+### Cambio 1: la carga automática se dispara una vez por proceso, desde el ViewModel
+
+- **Problema:** se descargaba en tres lugares:
+  - `MainActivity.onStart()` llamaba a `recargar()`, y `onStart` corre al rotar y cada vez que la app vuelve a primer plano;
+  - `Catalogo` tenía un `LaunchedEffect(Unit) { recargar() }`, que corre cada vez que el composable entra en la composición, o sea al volver de una ficha y al cambiar de pestaña;
+  - el botón Actualizar.
+- **Riesgo:** ciclo de vida (1.1 y 2.6 de la guía). Un callback de visibilidad o un efecto de composición no son "una vez": se repiten con cada rotación, navegación o vuelta del fondo. Resultado: peticiones de red que nadie pidió, que gastan datos y batería.
+- **Cambio:**
+  - Se eliminaron el `onStart` de `MainActivity` y el `LaunchedEffect` de `Catalogo`.
+  - El `init` de `ProgramaModel` dispara la carga si `repo.tomarCargaAutomatica()` devuelve `true`. Ese método usa un `AtomicBoolean` con `compareAndSet(false, true)`: vale `true` una sola vez.
+  - Como el repositorio es único por proceso (cambio 2), el flag también. Si Android crea otro ViewModel en el mismo proceso, no se repite la carga. Si mata el proceso, el flag vuelve a `false` junto con todo lo demás, y la próxima apertura carga una vez.
+
+### Cambio 2: una sola instancia de base, Retrofit y repositorio por proceso
+
+- **Problema:** `ProgramaModel` hacía `Servicios(app)` en su constructor. Cada ViewModel creaba su propia base de Room, su propio Retrofit con OkHttp y su propio repositorio. El ViewModel fabricaba sus dependencias.
+- **Riesgo:** instancia única (3.9 y 4.4 de la guía): varias bases abiertas sobre el mismo archivo y conexiones que no se reutilizan. Y capacidad de prueba (2.8): un ViewModel que crea su repositorio no se puede probar con uno falso. Además, el contador de peticiones de la Mesa se reiniciaba con cada ViewModel nuevo, cuando el enunciado dice que se reinicia al morir el proceso.
+- **Cambio:**
+  - `JornadasApp` (una `Application` registrada en el manifest) crea `Servicios` una sola vez, con `lazy`.
+  - `ProgramaModel` pasa de `AndroidViewModel` a `ViewModel` y recibe por constructor el repositorio, la Mesa y el `SavedStateHandle`. Ya no conoce el `Application` ni el `Context`.
+  - Una fábrica explícita, `ProgramaModel.Factory` (`viewModelFactory { initializer { ... } }`), los toma de `JornadasApp`. `MainActivity` la usa con `by viewModels { ProgramaModel.Factory }`.
+  - El extra de prueba `servicio_disponible` se aplica sobre la Mesa **antes** de crear el ViewModel, porque crear el ViewModel ya dispara la carga automática.
+
+### Cambio 3: dos toques durante una petición son un solo intento
+
+- **Problema:** `recargar()` lanzaba una corrutina por cada toque, aunque ya hubiera una petición en curso.
+- **Riesgo:** peticiones duplicadas que compiten por escribir el mismo resultado.
+- **Cambio:** `recargar()` sale enseguida si `descarga` ya es `EnCurso` (el mismo estado `sealed` del pedido 41). `EnCurso` se marca antes de lanzar la corrutina, así un segundo toque inmediato también lo ve. Cuando la petición termina, el estado pasa a `Ninguna` o `Fallida` y se puede volver a pedir. Los filtros no dependen de `descarga`, así que siguen editables durante la espera.
+- **Verificación:** compila (`./gradlew assembleDebug`). Instalada sobre una base en versión 1, la app abre sin errores y muestra el programa (la migración 1 → 2 corre bien). Pruebas manuales pendientes (el contador está en la pestaña Mesa):
+  - [ ] Abrir la app: el contador suma 1.
+  - [ ] Rotar, entrar a una ficha y volver, cambiar de pestaña: el contador no cambia.
+  - [ ] Con demora larga, tocar Actualizar dos veces seguidas: el contador suma 1. Durante la espera se pueden cambiar los filtros.
+  - [ ] Después de un éxito o una falla, Actualizar vuelve a sumar 1.
+  - [ ] Mandar la app al fondo y volver: el contador no cambia.
