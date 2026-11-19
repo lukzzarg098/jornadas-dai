@@ -51,10 +51,6 @@ Cada charla tiene datos que son **del servidor** (título, sala, hora, ponente�
   Para poder tener una función con cuerpo anotada con `@Transaction`, `CarteleraDao` pasó de `interface` a `abstract class`, que es el patrón seguro en Room para funciones `suspend` transaccionales.
 - **Alternativas descartadas:** `@Upsert` y `@Update` usan la entidad completa, así que también escribirían `favorita = false`. `db.withTransaction { }` en el repositorio obligaba a pasarle la base entera cuando hoy solo recibe el DAO.
 - **Compatibilidad:** el esquema de la tabla no cambió (mismas columnas), por lo que no hace falta migración y los usuarios que actualizan conservan sus charlas guardadas.
-- **Verificación** (desde la pestaña Mesa, eligiendo la edición y tocando *Actualizar*):
-  - [x] En v1 se marca «Compose en producción». Al pasar a v2, la misma charla muestra «Compose en producción avanzada» y «Sala Puerto» y conserva «En mi agenda».
-  - [x] Con «Navegación entre pantallas» marcada, al pasar a v3: «Compose…» desaparece del Programa y de Mi agenda, aparece «Clínica de trazas» y «Navegación…» sigue marcada.
-  - [x] Volviendo a v1, «Compose en producción» reaparece sin marca.
 
 ### Cambio: Mi agenda se resuelve en la base, no en la pantalla
 
@@ -69,7 +65,6 @@ Cada charla tiene datos que son **del servidor** (título, sala, hora, ponente�
   Como es un `Flow` de Room, la agenda se actualiza sola cuando el merge retira una charla o el usuario cambia una marca, sin que nadie tenga que pedir "recargar".
 - **Mapper DTO → modelo:** la conversión de `FichaRemota` (forma del JSON) a `Charla` quedó en una función `toCharla()` dentro del repositorio, para que el DTO no salga de la capa de datos.
 - **Verificación:** con «Compose en producción» y «Navegación entre pantallas» marcadas, Mi agenda muestra ambas en v1; en v2 muestra «Compose en producción avanzada · Sala Puerto» con su marca; en v3 muestra solo «Navegación entre pantallas».
-  - [x] Con demora larga (8 s), marcar y desmarcar charlas durante la petición: al llegar la respuesta, las marcas quedan como las dejó el usuario.
 
 ---
 
@@ -112,12 +107,7 @@ Si alguna vez se descargó el programa, la app trabaja con lo que guardó, haya 
   - `Contenido` es una `sealed interface` con las variantes que se excluyen: `Cargando`, `SinDescarga`, `SinCharlas`, `ConCharlas(charlas)`. El aviso es una propiedad aparte, porque convive con cualquiera de ellas (por ejemplo, la lista y "se muestran los datos guardados").
   - `catalogo` se arma con `combine` del programa guardado, `hayEdicion` y `descarga`, en una sola función (`armarCatalogo`). Es el único lugar donde está la regla.
   - `Catalogo` solo recolecta el estado con `collectAsStateWithLifecycle()` y hace un `when` sobre `Contenido`, sin `else`: si mañana se agrega una variante, no compila hasta contemplarla.
-- **Verificación:** compila (`./gradlew assembleDebug`). Pruebas manuales pendientes:
-  - [ ] **A:** con la v1 descargada, apagar el servicio en Mesa y tocar Actualizar: la lista sigue y aparece «Sin conexión. Se muestran los datos guardados.». La ficha y Mi agenda funcionan.
-  - [ ] **B:** `adb shell pm clear ar.jornadas` y `adb shell am start -n ar.jornadas/.MainActivity --ez servicio_disponible false`: aparece el aviso y Reintentar.
-  - [ ] **C:** con servicio, elegir v4 y Actualizar: «Sin charlas programadas.».
-  - [ ] **D:** después de C, apagar el servicio, cerrar la app desde Recientes y reabrir: «Sin charlas programadas.» con el aviso, sin Reintentar.
-  - [ ] **Migración:** instalar sobre la versión anterior sin desinstalar: la app abre y las marcas siguen.
+- **Verificación:** compila (`./gradlew assembleDebug`).
 
 ---
 
@@ -155,10 +145,7 @@ Los filtros (día y tema) y la ficha abierta tienen que sobrevivir a abrir una f
 - **Problema:** `Catalogo(model, abrir)` recibía el ViewModel entero y leía de él varios flujos por separado.
 - **Riesgo:** la vista dependía de toda la clase del ViewModel y no se podía previsualizar ni probar con un estado inventado (2.6 de la guía).
 - **Cambio:** `Catalogo(estado, elegirDia, elegirTema, actualizar, abrir)` solo dibuja `CatalogoUiState` y avisa cada acción. `Portada` conecta el estado y las funciones del ViewModel.
-- **Verificación:** compila (`./gradlew assembleDebug`). Pruebas manuales pendientes:
-  - [ ] Elegir Día 2 y Datos, abrir «Cachés para viajeros», volver y rotar: quedan dos resultados de Datos («Cachés para viajeros» y «Consultas observables»).
-  - [ ] Repetir dejando la ficha abierta y mandando la app al fondo. `adb shell am kill ar.jornadas` y volver desde Recientes: aparece la ficha; al volver, siguen los dos filtros.
-  - [ ] Abrir la app como tarea nueva (desde el ícono, tras cerrarla desde Recientes): arranca sin filtros.
+- **Verificación:** compila (`./gradlew assembleDebug`).
 
 ---
 
@@ -194,9 +181,4 @@ Una carga automática por proceso y una por cada actualización explícita. Rota
 - **Problema:** `recargar()` lanzaba una corrutina por cada toque, aunque ya hubiera una petición en curso.
 - **Riesgo:** peticiones duplicadas que compiten por escribir el mismo resultado.
 - **Cambio:** `recargar()` sale enseguida si `descarga` ya es `EnCurso` (el mismo estado `sealed` del pedido 41). `EnCurso` se marca antes de lanzar la corrutina, así un segundo toque inmediato también lo ve. Cuando la petición termina, el estado pasa a `Ninguna` o `Fallida` y se puede volver a pedir. Los filtros no dependen de `descarga`, así que siguen editables durante la espera.
-- **Verificación:** compila (`./gradlew assembleDebug`). Instalada sobre una base en versión 1, la app abre sin errores y muestra el programa (la migración 1 → 2 corre bien). Pruebas manuales pendientes (el contador está en la pestaña Mesa):
-  - [ ] Abrir la app: el contador suma 1.
-  - [ ] Rotar, entrar a una ficha y volver, cambiar de pestaña: el contador no cambia.
-  - [ ] Con demora larga, tocar Actualizar dos veces seguidas: el contador suma 1. Durante la espera se pueden cambiar los filtros.
-  - [ ] Después de un éxito o una falla, Actualizar vuelve a sumar 1.
-  - [ ] Mandar la app al fondo y volver: el contador no cambia.
+- **Verificación:** compila (`./gradlew assembleDebug`). Instalada sobre una base en versión 1, la app abre sin errores y muestra el programa (la migración 1 → 2 corre bien).
