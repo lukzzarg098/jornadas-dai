@@ -10,7 +10,7 @@ Cada pedido del enunciado se trabajó en su propia branch. Para cada cambio se i
 |---|---|---|
 | 0 · Compilación | `main` | Hecho |
 | 42 · Agenda personal | `pedido-42-agenda-personal` | Hecho |
-| 41 · Programa sin señal | `pedido-41-sin-senal` | Pendiente |
+| 41 · Programa sin señal | `pedido-41-sin-senal` | Hecho (sale de la 42) |
 | 43 · Volver al punto de lectura | `pedido-43-punto-de-lectura` | Pendiente |
 | 44 · Control de descargas | `pedido-44-control-descargas` | Pendiente |
 
@@ -75,7 +75,49 @@ Cada charla tiene datos que son **del servidor** (título, sala, hora, ponente�
 
 ## 41 · Programa sin señal
 
-_Pendiente._
+### Qué pide
+Si alguna vez se descargó el programa, la app trabaja con lo que guardó, haya señal o no. Hay cuatro casos:
+
+| Caso | Comportamiento esperado |
+|---|---|
+| A · Hay una edición guardada y la descarga falla | Lista, ficha y Mi agenda siguen; aviso de que se usan datos guardados |
+| B · Nunca se descargó y la descarga falla | Aviso y botón Reintentar |
+| C · Llega la v4 (lista vacía) | «Sin charlas programadas» |
+| D · Después de la v4, se reabre sin señal | Sigue siendo una edición válida: «Sin charlas programadas» y no Reintentar |
+
+### Cambio 1: registrar que hubo una edición descargada (base de datos)
+
+- **Problema:** la app no tenía forma de distinguir "descargué y vino vacío" (v4) de "nunca descargué". Las dos situaciones dejan la tabla `charlas` vacía, así que el caso D se veía como el caso B.
+- **Riesgo:** mostrar un estado falso (2.7 de la guía: lista vacía y error comunican cosas distintas). El usuario que ya tenía una edición vería "Reintentar" como si nunca hubiera descargado nada.
+- **Cambio** (`data/Programa.kt`, `Servicios.kt`):
+  - Entidad nueva `Edicion` (tabla `edicion`, una sola fila). Que exista la fila significa que se guardó al menos una edición completa.
+  - `aplicarPrograma` registra la edición **dentro de la misma `@Transaction`** que el merge del pedido 42: si se guardó el programa, se guardó la marca, y nunca queda una sin la otra.
+  - `CarteleraDao.hayEdicion()` lo expone como `Flow<Boolean>`.
+  - La base pasa a `version = 2` con `MIGRACION_1_2`, registrada con `addMigrations(...)`. La migración solo crea la tabla (no toca `charlas` ni las marcas) y, si el usuario ya tenía charlas guardadas, inserta la fila: quien actualiza desde la versión instalada ya tenía una edición.
+- **Alternativas descartadas:** `fallbackToDestructiveMigration()` borraría la base de los usuarios que actualizan, y el enunciado pide conservar sus datos. Guardar la marca en `SharedPreferences` es más corto pero se escribe fuera de la transacción de Room y puede quedar desfasada del programa guardado.
+
+### Cambio 2: el repositorio devuelve un resultado en vez de lanzar excepciones
+
+- **Problema:** `sincronizar()` dejaba escapar las excepciones y el ViewModel solo atrapaba `IOException`. `ProgramaApi.consultar()` devuelve la lista directa (no `Response<...>`), así que un error HTTP llega como `HttpException` y un JSON que no coincide con el DTO como `JsonParseException`: ninguna de las dos es `IOException`, y la app se cerraba.
+- **Riesgo:** los tres tipos de fallo de Retrofit (4.5 de la guía): conexión, HTTP y conversión. Atrapar uno solo deja a los otros dos como un crash.
+- **Cambio** (`data/AgendaRepository.kt`): `sincronizar()` devuelve `ResultadoDescarga` (`Exito`, `SinConexion`, `RespuestaInvalida`), una `sealed interface`. Atrapa cada error esperado por su tipo, sin un `catch (e: Exception)` genérico que también se tragaría la cancelación de la corrutina. El trabajo corre en `withContext(Dispatchers.IO)`. El repositorio devuelve un resultado, no un texto: el mensaje para el usuario lo arma el ViewModel.
+
+### Cambio 3: el estado de la pantalla es un solo objeto armado en el ViewModel
+
+- **Problema:** `ProgramaModel` exponía `aviso` y `cargando` como `MutableStateFlow` públicos, y `Catalogo` decidía qué mostrar combinándolos. Si había aviso, mostraba el aviso **en lugar de** la lista (`Catalogo.kt`), así que una falla escondía los datos guardados (caso A).
+- **Riesgo:** banderas sueltas que permiten combinaciones imposibles (cargando y con el error viejo a la vez); estado con dos dueños, porque cualquier pantalla podía modificar un `MutableStateFlow` público (2.5 y 2.9 de la guía); y la regla de qué mostrar escrita en la vista.
+- **Cambio** (`ui/ProgramaModel.kt`, `ui/Catalogo.kt`):
+  - `Descarga` (`Ninguna`, `EnCurso`, `Fallida`) es una `sealed interface` **privada** del ViewModel: la petición está en un solo estado a la vez y nadie de afuera lo puede modificar.
+  - `CatalogoUiState` reúne todo lo que el Programa necesita: `contenido`, `descargando` y `aviso`.
+  - `Contenido` es una `sealed interface` con las variantes que se excluyen: `Cargando`, `SinDescarga`, `SinCharlas`, `ConCharlas(charlas)`. El aviso es una propiedad aparte, porque convive con cualquiera de ellas (por ejemplo, la lista y "se muestran los datos guardados").
+  - `catalogo` se arma con `combine` del programa guardado, `hayEdicion` y `descarga`, en una sola función (`armarCatalogo`). Es el único lugar donde está la regla.
+  - `Catalogo` solo recolecta el estado con `collectAsStateWithLifecycle()` y hace un `when` sobre `Contenido`, sin `else`: si mañana se agrega una variante, no compila hasta contemplarla.
+- **Verificación:** compila (`./gradlew assembleDebug`). Pruebas manuales pendientes:
+  - [ ] **A:** con la v1 descargada, apagar el servicio en Mesa y tocar Actualizar: la lista sigue y aparece «Sin conexión. Se muestran los datos guardados.». La ficha y Mi agenda funcionan.
+  - [ ] **B:** `adb shell pm clear ar.jornadas` y `adb shell am start -n ar.jornadas/.MainActivity --ez servicio_disponible false`: aparece el aviso y Reintentar.
+  - [ ] **C:** con servicio, elegir v4 y Actualizar: «Sin charlas programadas.».
+  - [ ] **D:** después de C, apagar el servicio, cerrar la app desde Recientes y reabrir: «Sin charlas programadas.» con el aviso, sin Reintentar.
+  - [ ] **Migración:** instalar sobre la versión anterior sin desinstalar: la app abre y las marcas siguen.
 
 ---
 

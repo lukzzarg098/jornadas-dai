@@ -1,12 +1,36 @@
 package ar.jornadas.data
 
+import com.google.gson.JsonParseException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import retrofit2.HttpException
+import java.io.IOException
+
+/** Cómo terminó una descarga. Es un resultado, no un texto: el mensaje lo arma el ViewModel. */
+sealed interface ResultadoDescarga {
+    data object Exito : ResultadoDescarga
+    data object SinConexion : ResultadoDescarga        // no se llegó al servidor
+    data object RespuestaInvalida : ResultadoDescarga  // HTTP de error o JSON que no coincide con el DTO
+}
+
 class AgendaRepository(private val api: ProgramaApi, private val dao: CarteleraDao) {
     val programa = dao.observar()
     val agenda = dao.observarAgenda()
+    val hayEdicion = dao.hayEdicion()
 
-    suspend fun sincronizar() {
-        val fichas = api.consultar().map { it.toCharla() }
-        dao.aplicarPrograma(fichas)
+    // Los tres tipos de fallo de Retrofit se convierten en un resultado; la app no se cae.
+    suspend fun sincronizar(): ResultadoDescarga = withContext(Dispatchers.IO) {
+        try {
+            val fichas = api.consultar().map { it.toCharla() }
+            dao.aplicarPrograma(fichas)
+            ResultadoDescarga.Exito
+        } catch (e: IOException) {
+            ResultadoDescarga.SinConexion
+        } catch (e: HttpException) {
+            ResultadoDescarga.RespuestaInvalida
+        } catch (e: JsonParseException) {
+            ResultadoDescarga.RespuestaInvalida
+        }
     }
 
     suspend fun cambiarFavorita(id: String) = dao.alternar(id)

@@ -1,6 +1,8 @@
 package ar.jornadas.data
 
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import retrofit2.http.GET
 import kotlinx.coroutines.flow.Flow
 
@@ -15,6 +17,10 @@ interface ProgramaApi {
 data class Charla(@PrimaryKey val id: String, val titulo: String, val tema: String, val dia: Int,
     val hora: String, val sala: String, val ponente: String, val resumen: String,
     val favorita: Boolean = false)
+
+// Existe una fila si alguna vez se guardó una edición completa del programa (aunque venga vacía).
+@Entity(tableName = "edicion")
+data class Edicion(@PrimaryKey val id: Int = 1)
 
 @Dao
 abstract class CarteleraDao {
@@ -42,7 +48,14 @@ abstract class CarteleraDao {
     abstract suspend fun actualizarDatos(id: String, titulo: String, tema: String, dia: Int,
         hora: String, sala: String, ponente: String, resumen: String)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM edicion)")
+    abstract fun hayEdicion(): Flow<Boolean>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun registrarEdicion(edicion: Edicion)
+
     // Merge por id: los datos del servidor se actualizan, las marcas del usuario no se tocan.
+    // En la misma transacción queda registrado que hay una edición guardada.
     @Transaction
     open suspend fun aplicarPrograma(fichas: List<Charla>) {
         borrarAusentes(fichas.map { it.id })
@@ -50,10 +63,22 @@ abstract class CarteleraDao {
         fichas.forEach {
             actualizarDatos(it.id, it.titulo, it.tema, it.dia, it.hora, it.sala, it.ponente, it.resumen)
         }
+        registrarEdicion(Edicion())
     }
 }
 
-@Database(entities = [Charla::class], version = 1, exportSchema = false)
+@Database(entities = [Charla::class, Edicion::class], version = 2, exportSchema = false)
 abstract class Archivo : RoomDatabase() {
     abstract fun cartelera(): CarteleraDao
+
+    companion object {
+        // 1 → 2: solo agrega la tabla nueva; no toca las charlas ni las marcas.
+        val MIGRACION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS edicion (id INTEGER NOT NULL, PRIMARY KEY(id))")
+                // Quien ya tenía charlas descargadas, ya tenía una edición.
+                db.execSQL("INSERT INTO edicion (id) SELECT 1 WHERE EXISTS (SELECT 1 FROM charlas)")
+            }
+        }
+    }
 }
